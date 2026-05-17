@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+*.env
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# OS
+.DS_Store
+
+# Secrets / local data
+backend/memory/data/*.json
+backend/.room_store.json
+
+# Claude worktree metadata
+.claude/
