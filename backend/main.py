@@ -4,15 +4,15 @@ import json
 from typing import Dict
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import get_anthropic_api_key, load_environment
 from models.schemas import RoomState
 from routers import rooms as rooms_router_module
 from routers import websocket as websocket_router_module
 
-load_dotenv()
+load_environment()
 
 # ---------------------------------------------------------------------------
 # Persistent room store — survives hot reloads
@@ -109,7 +109,11 @@ async def root():
 
 @app.get("/health", tags=["health"])
 async def health():
-    return {"status": "ok", "rooms_active": len(_room_store)}
+    return {
+        "status": "ok",
+        "rooms_active": len(_room_store),
+        "claude_configured": bool(get_anthropic_api_key()),
+    }
 
 
 # ---------------------------------------------------------------------------

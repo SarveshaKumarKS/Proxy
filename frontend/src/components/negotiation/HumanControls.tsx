@@ -96,14 +96,24 @@ export function HumanControls({
   };
 
   const handleApplyChanges = async () => {
-    if (!myProxy) return;
+    if (!currentUser) return;
     setIsApplying(true);
     try {
-      await relaxConstraint(room.room_id, {
-        constraint_type: "budget_travel",
-        new_value: { budget: selectedBudget, travel_radius: travelRadius },
-        proxy_id: myProxy.proxy_id,
-      });
+      const travel =
+        travelRadius < 34 ? "low" : travelRadius < 67 ? "medium" : "high";
+
+      await Promise.all([
+        relaxConstraint(room.room_id, {
+          user_id: currentUser.user_id,
+          constraint_type: "budget",
+          new_value: selectedBudget,
+        }),
+        relaxConstraint(room.room_id, {
+          user_id: currentUser.user_id,
+          constraint_type: "travel",
+          new_value: travel,
+        }),
+      ]);
       toast.success("Constraints updated!");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update");
@@ -113,7 +123,7 @@ export function HumanControls({
   };
 
   const handleVeto = async () => {
-    if (!myProxy || !vetoReason.trim()) {
+    if (!currentUser || !vetoReason.trim()) {
       toast.error("Please enter a veto reason");
       return;
     }
@@ -125,8 +135,8 @@ export function HumanControls({
     setIsVetoing(true);
     try {
       await vetoProposal(room.room_id, {
-        proxy_id: myProxy.proxy_id,
-        venue_id: lastProposal?.venue_id,
+        user_id: currentUser.user_id,
+        veto_target: lastProposal?.name ?? lastProposal?.venue_id,
         reason: vetoReason.trim(),
       });
       setVetoReason("");

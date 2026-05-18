@@ -26,9 +26,59 @@ function getTravelColor(minutes: number, avgMinutes: number): string {
   return "#f87171"; // red - unfair
 }
 
+function TravelTimesPanel({ travelData }: { travelData?: TravelData[] }) {
+  if (!travelData || travelData.length === 0) return null;
+
+  const avgMinutes =
+    travelData.reduce((s, t) => s + t.travelMinutes, 0) / travelData.length;
+
+  return (
+    <div className="absolute left-4 top-4 z-10 w-64 rounded-lg border border-white/10 bg-[#0d0d14]/90 p-3 backdrop-blur">
+      <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
+        Travel Times
+      </h4>
+      <div className="space-y-2">
+        {travelData.map((t, i) => {
+          const color = getTravelColor(t.travelMinutes, avgMinutes);
+          return (
+            <div key={t.userId} className="flex items-center gap-3">
+              <div
+                className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold"
+                style={{
+                  backgroundColor: `${getProxyColor(i)}20`,
+                  border: `1.5px solid ${getProxyColor(i)}50`,
+                  color: getProxyColor(i),
+                }}
+              >
+                {t.userName.charAt(0)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="truncate text-xs text-slate-300">{t.userName}</span>
+                  <span className="ml-2 font-mono text-xs font-medium" style={{ color }}>
+                    {t.travelMinutes} min
+                  </span>
+                </div>
+                <div className="mt-1 h-1 overflow-hidden rounded-full bg-[#2d2d3f]">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(100, (t.travelMinutes / 60) * 100)}%`,
+                      backgroundColor: color,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Fallback static map display when Mapbox isn't available
 function StaticMapFallback({
-  users,
   venue,
   travelData,
 }: FairnessMapProps) {
@@ -150,7 +200,7 @@ function StaticMapFallback({
 
 // Main FairnessMap — tries to load Mapbox, falls back gracefully
 export function FairnessMap({ users, venue, travelData }: FairnessMapProps) {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const [mapContainer, setMapContainer] = useState<HTMLDivElement | null>(null);
   const mapRef = useRef<unknown>(null);
   const [mapboxLoaded, setMapboxLoaded] = useState(false);
   const [mapboxError, setMapboxError] = useState(false);
@@ -158,10 +208,8 @@ export function FairnessMap({ users, venue, travelData }: FairnessMapProps) {
   const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
   useEffect(() => {
-    if (!MAPBOX_TOKEN || !mapContainerRef.current) {
-      setMapboxError(true);
-      return;
-    }
+    if (!MAPBOX_TOKEN) return;
+    if (!mapContainer) return;
 
     // Resolve coordinates — backend may send lat/lng or latitude/longitude
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,27 +218,41 @@ export function FairnessMap({ users, venue, travelData }: FairnessMapProps) {
     const venueLng: number | null = v?.longitude ?? v?.lng ?? null;
 
     let isMounted = true;
+    let resizeObserver: ResizeObserver | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
     import("mapbox-gl")
       .then((mapboxgl) => {
-        if (!isMounted || !mapContainerRef.current) return;
+        if (!isMounted) return;
 
         mapboxgl.default.accessToken = MAPBOX_TOKEN;
         const map = new mapboxgl.default.Map({
-          container: mapContainerRef.current,
+          container: mapContainer,
           style: "mapbox://styles/mapbox/dark-v11",
           center: [venueLng ?? -73.9857, venueLat ?? 40.7484],
           zoom: 13,
         });
 
         mapRef.current = map;
+        const resizeMap = () => {
+          if (isMounted) map.resize();
+        };
+        resizeObserver = new ResizeObserver(resizeMap);
+        resizeObserver.observe(mapContainer);
+        requestAnimationFrame(resizeMap);
+        resizeTimer = setTimeout(resizeMap, 250);
 
         map.on("load", () => {
           if (!isMounted) return;
+          map.resize();
           setMapboxLoaded(true);
+          const bounds = new mapboxgl.default.LngLatBounds();
+          let boundsPointCount = 0;
 
           // Venue marker
           if (venue && venueLat != null && venueLng != null) {
+            bounds.extend([venueLng, venueLat]);
+            boundsPointCount += 1;
             const el = document.createElement("div");
             el.style.cssText = `
               width: 36px; height: 36px;
@@ -225,6 +287,8 @@ export function FairnessMap({ users, venue, travelData }: FairnessMapProps) {
 
           travelData?.forEach((t, i) => {
             if (!t.latitude || !t.longitude) return;
+            bounds.extend([t.longitude, t.latitude]);
+            boundsPointCount += 1;
             const color = getProxyColor(i);
             const travelColor = getTravelColor(t.travelMinutes, avgMinutes);
 
@@ -278,6 +342,14 @@ export function FairnessMap({ users, venue, travelData }: FairnessMapProps) {
               });
             }
           });
+
+          if (boundsPointCount > 1) {
+            map.fitBounds(bounds, {
+              padding: { top: 120, right: 120, bottom: 120, left: 360 },
+              maxZoom: 9,
+              duration: 0,
+            });
+          }
         });
       })
       .catch(() => {
@@ -286,20 +358,30 @@ export function FairnessMap({ users, venue, travelData }: FairnessMapProps) {
 
     return () => {
       isMounted = false;
+      resizeObserver?.disconnect();
+      if (resizeTimer) clearTimeout(resizeTimer);
       if (mapRef.current) {
         (mapRef.current as { remove: () => void }).remove();
         mapRef.current = null;
       }
     };
-  }, [MAPBOX_TOKEN, venue, travelData]);
+  }, [MAPBOX_TOKEN, mapContainer, venue, travelData]);
 
   if (mapboxError || !MAPBOX_TOKEN) {
     return <StaticMapFallback users={users} venue={venue} travelData={travelData} />;
   }
 
   return (
-    <div className="relative w-full h-full">
-      <div ref={mapContainerRef} className="absolute inset-0 rounded-xl overflow-hidden" />
+    <div
+      className="relative w-full"
+      style={{ height: "calc(100vh - 4rem)", minHeight: "480px" }}
+    >
+      <div
+        ref={setMapContainer}
+        className="rounded-xl overflow-hidden"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+      />
+      <TravelTimesPanel travelData={travelData} />
       {!mapboxLoaded && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#0d0d14] rounded-xl">
           <div className="text-slate-500 text-sm">Loading map...</div>

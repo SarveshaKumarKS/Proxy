@@ -1,10 +1,9 @@
 """Central resolver agent — synthesizes conflicts and drives toward consensus."""
-import os
 import json
 from typing import List
 import anthropic
-from dotenv import load_dotenv
 
+from config import get_anthropic_api_key
 from models.schemas import (
     ConsensusResult,
     NegotiationMessage,
@@ -13,9 +12,7 @@ from models.schemas import (
 )
 from services.fairness import compute_all_metrics
 
-load_dotenv()
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY = get_anthropic_api_key()
 
 
 def _format_messages(messages: List[NegotiationMessage]) -> str:

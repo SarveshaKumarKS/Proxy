@@ -179,7 +179,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                             veto_msg = NegotiationMessage(
                                 proxy_name=proxy_model.proxy_name if proxy_model else user.name,
                                 human_name=user.name,
-                                message=f"[VETO] {user.name} vetoed '{veto_target}': {reason}",
+                                message=f'{user.name} jumped in: "{reason}"',
                                 message_type="conflict",
                             )
                             room.messages.append(veto_msg)

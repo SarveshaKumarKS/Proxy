@@ -7,7 +7,7 @@ import type {
   UserProfile,
   WebSocketMessage,
 } from "@/types";
-import { RoomStatus } from "@/types";
+import { MessageType, RoomStatus } from "@/types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function normalizeConsensus(c: any): any {
@@ -72,6 +72,7 @@ function normalizeRoom(raw: any): RoomState {
     room_id: raw.room_id ?? raw.id ?? "",
     room_name: raw.room_name ?? raw.name ?? "Untitled Room",
     template: raw.template,
+    location: raw.location ?? null,
     status: raw.status ?? "waiting",
     created_at: raw.created_at ?? new Date().toISOString(),
     host_id: raw.host_id ?? "",
@@ -174,6 +175,19 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
                 if (d.fairness) patch.fairness_metrics = d.fairness as FairnessMetrics;
                 if (d.fairness_metrics) patch.fairness_metrics = d.fairness_metrics as FairnessMetrics;
                 if (d.messages) patch.messages = d.messages;
+                if (typeof d.message === "string") {
+                  const updateMessage: NegotiationMessage = {
+                    message_id: `update-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                    proxy_id: "system",
+                    proxy_name: "System",
+                    human_name: "",
+                    avatar_emoji: "↻",
+                    content: d.message,
+                    message_type: MessageType.INFO,
+                    timestamp: msg.timestamp ?? new Date().toISOString(),
+                  };
+                  patch.messages = [...cur.messages, updateMessage];
+                }
                 if (Object.keys(patch).length > 0) {
                   set({ room: { ...cur, ...patch } });
                 }
@@ -202,6 +216,44 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
               content: msgObj.content ?? msgObj.message ?? "",
               message_type: msgObj.message_type ?? "info",
               timestamp: msgObj.timestamp ?? new Date().toISOString(),
+            };
+            const cur = get().room;
+            if (cur) {
+              set({ room: { ...cur, messages: [...cur.messages, normalized] } });
+            }
+            break;
+          }
+          case "chat": {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const d = msg.data as any;
+            const normalized: NegotiationMessage = {
+              message_id: d?.message_id ?? `human-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              proxy_id: "human",
+              proxy_name: d?.user_name ?? "Human",
+              human_name: d?.user_name ?? "",
+              avatar_emoji: d?.avatar_emoji ?? "💬",
+              content: d?.message ?? "",
+              message_type: MessageType.INFO,
+              timestamp: d?.timestamp ?? msg.timestamp ?? new Date().toISOString(),
+            };
+            const cur = get().room;
+            if (cur && normalized.content) {
+              set({ room: { ...cur, messages: [...cur.messages, normalized] } });
+            }
+            break;
+          }
+          case "human_checkpoint": {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const d = msg.data as any;
+            const normalized: NegotiationMessage = {
+              message_id: d?.message_id ?? `checkpoint-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              proxy_id: "system",
+              proxy_name: "Checkpoint",
+              human_name: "",
+              avatar_emoji: "👀",
+              content: d?.message ?? "Humans can weigh in now before the agents settle on a final compromise.",
+              message_type: MessageType.INFO,
+              timestamp: d?.timestamp ?? msg.timestamp ?? new Date().toISOString(),
             };
             const cur = get().room;
             if (cur) {

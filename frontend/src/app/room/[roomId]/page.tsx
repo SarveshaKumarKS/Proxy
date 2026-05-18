@@ -57,11 +57,10 @@ export default function RoomPage({
   const room = useRoomStore((s) => s.room);
   const currentUser = useRoomStore((s) => s.currentUser);
   const setRoom = useRoomStore((s) => s.setRoom);
-  const isConnected = useRoomStore((s) => s.isConnected);
   const participantVersion = useRoomStore((s) => s.participantVersion);
 
   const [isLoading, setIsLoading] = useState(!room);
-  const [showConsensus, setShowConsensus] = useState(false);
+  const [isConsensusDismissed, setIsConsensusDismissed] = useState(false);
 
   // Connect WebSocket
   const { isConnected: wsConnected } = useWebSocket(roomId);
@@ -78,13 +77,6 @@ export default function RoomPage({
         router.push("/");
       });
   }, [roomId, participantVersion, setRoom, router]); // participantVersion triggers refetch on join/leave
-
-  // Show consensus card when consensus is reached
-  useEffect(() => {
-    if (room?.status === RoomStatus.CONSENSUS && room.consensus?.achieved) {
-      setShowConsensus(true);
-    }
-  }, [room?.status, room?.consensus]);
 
   const handleRoomUpdate = (updatedRoom: RoomState) => {
     setRoom(updatedRoom);
@@ -106,6 +98,10 @@ export default function RoomPage({
   }
 
   const fairnessMetrics = room.fairness_metrics ?? DEFAULT_FAIRNESS;
+  const showConsensus =
+    room.status === RoomStatus.CONSENSUS &&
+    Boolean(room.consensus?.achieved) &&
+    !isConsensusDismissed;
 
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0f] overflow-hidden">
@@ -228,7 +224,7 @@ export default function RoomPage({
         {showConsensus && room.consensus && (
           <ConsensusCard
             result={room.consensus}
-            onClose={() => setShowConsensus(false)}
+            onClose={() => setIsConsensusDismissed(true)}
           />
         )}
       </AnimatePresence>

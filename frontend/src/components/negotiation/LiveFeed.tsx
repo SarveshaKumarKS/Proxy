@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { NegotiationMessage, ProxyAgent } from "@/types";
 import { MessageType } from "@/types";
 import { formatTimestamp, getProxyColor, messageTypeBg, messageTypeColor } from "@/lib/utils";
+import { useRoomStore } from "@/stores/roomStore";
 
 interface LiveFeedProps {
   messages: NegotiationMessage[];
@@ -26,8 +27,31 @@ function getThinkingProxies(proxies: ProxyAgent[]): ProxyAgent[] {
   return proxies.filter((p) => p.is_thinking);
 }
 
+const QUICK_PROMPTS = [
+  {
+    label: "Too pricey",
+    message: "Can we keep this cheaper? I don't want price to quietly decide the plan.",
+  },
+  {
+    label: "Feels unfair",
+    message: "This feels unfair to someone. Can the agents explain who is compromising the most?",
+  },
+  {
+    label: "Too far",
+    message: "The commute feels rough. Can we find something that doesn't make one person take the hit?",
+  },
+  {
+    label: "Meet halfway",
+    message: "Can we try a real halfway compromise instead of optimizing one score?",
+  },
+];
+
 export function LiveFeed({ messages, proxies }: LiveFeedProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [draft, setDraft] = useState("");
+  const currentUser = useRoomStore((s) => s.currentUser);
+  const isConnected = useRoomStore((s) => s.isConnected);
+  const sendWSMessage = useRoomStore((s) => s.sendWSMessage);
 
   useEffect(() => {
     if (bottomRef.current) {
@@ -40,13 +64,47 @@ export function LiveFeed({ messages, proxies }: LiveFeedProps) {
     proxies.map((p, i) => [p.proxy_id, getProxyColor(p.color_index ?? i)])
   );
 
+  const sendHumanComment = (content: string) => {
+    const message = content.trim();
+    if (!message) return;
+
+    sendWSMessage("chat", {
+      user_id: currentUser?.user_id,
+      user_name: currentUser?.name ?? "Human",
+      avatar_emoji: currentUser?.avatar_emoji ?? "💬",
+      message,
+    });
+    setDraft("");
+  };
+
+  const sendHumanIntervention = (content: string, target: string) => {
+    const message = content.trim();
+    if (!message) return;
+
+    if (!currentUser) {
+      sendHumanComment(message);
+      return;
+    }
+
+    sendWSMessage("veto", {
+      user_id: currentUser.user_id,
+      veto_target: target,
+      reason: message,
+    });
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    sendHumanComment(draft);
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-3 border-b border-white/8 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-sm font-semibold text-white">Live Feed</span>
+          <span className="text-sm font-semibold text-white">Agent Group Chat</span>
         </div>
         <span className="text-xs text-slate-600">{messages.length} messages</span>
       </div>
@@ -60,18 +118,27 @@ export function LiveFeed({ messages, proxies }: LiveFeedProps) {
               animate={{ opacity: 1 }}
               className="flex flex-col items-center justify-center h-40 text-center"
             >
-              <div className="text-3xl mb-2">💬</div>
               <div className="text-sm text-slate-500">
                 Negotiation hasn&apos;t started yet.
                 <br />
-                Start the negotiation to see proxy messages.
+                Start the negotiation to see the agent debate.
               </div>
             </motion.div>
           )}
 
           {messages.map((msg) => {
-            const color = proxyColorMap[msg.proxy_id] ?? "#94a3b8";
+            const matchedProxy = proxies.find(
+              (proxy) =>
+                proxy.proxy_id === msg.proxy_id ||
+                proxy.proxy_name === msg.proxy_name ||
+                proxy.human_name === msg.human_name
+            );
+            const color =
+              proxyColorMap[msg.proxy_id] ??
+              (matchedProxy ? proxyColorMap[matchedProxy.proxy_id] : undefined) ??
+              "#94a3b8";
             const isResolver = msg.message_type === MessageType.RESOLVER;
+            const isHuman = msg.proxy_id === "human";
             return (
               <motion.div
                 key={msg.message_id}
@@ -80,7 +147,9 @@ export function LiveFeed({ messages, proxies }: LiveFeedProps) {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.25, type: "spring", stiffness: 260, damping: 24 }}
-                className={`p-3 rounded-xl border ${messageTypeBg(msg.message_type)} ${
+                className={`p-3 rounded-xl border ${
+                  isHuman ? "bg-blue-500/10 border-blue-400/25" : messageTypeBg(msg.message_type)
+                } ${
                   isResolver ? "border-white/20" : ""
                 }`}
               >
@@ -100,14 +169,18 @@ export function LiveFeed({ messages, proxies }: LiveFeedProps) {
                     <span className="text-xs font-semibold" style={{ color }}>
                       {msg.proxy_name}
                     </span>
-                    <span className="text-xs text-slate-600 ml-1">
-                      ({msg.human_name})
-                    </span>
+                    {msg.human_name && !isHuman && (
+                      <span className="text-xs text-slate-600 ml-1">
+                        ({msg.human_name})
+                      </span>
+                    )}
                   </div>
                   <span
-                    className={`text-xs font-medium px-2 py-0.5 rounded-full bg-black/20 ${messageTypeColor(msg.message_type)}`}
+                    className={`text-xs font-medium px-2 py-0.5 rounded-full bg-black/20 ${
+                      isHuman ? "text-blue-200" : messageTypeColor(msg.message_type)
+                    }`}
                   >
-                    {messageTypeLabel(msg.message_type)}
+                    {isHuman ? "Human" : messageTypeLabel(msg.message_type)}
                   </span>
                 </div>
 
@@ -156,6 +229,38 @@ export function LiveFeed({ messages, proxies }: LiveFeedProps) {
           })}
         </AnimatePresence>
         <div ref={bottomRef} />
+      </div>
+
+      <div className="border-t border-white/8 p-3 space-y-2 flex-shrink-0">
+        <div className="grid grid-cols-2 gap-1.5">
+          {QUICK_PROMPTS.map((prompt) => (
+            <button
+              key={prompt.label}
+              type="button"
+              disabled={!isConnected}
+              onClick={() => sendHumanIntervention(prompt.message, prompt.label)}
+              className="px-2 py-1.5 rounded-lg border border-white/8 bg-white/[0.03] text-[11px] text-slate-400 hover:text-white hover:border-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {prompt.label}
+            </button>
+          ))}
+        </div>
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={!isConnected}
+            placeholder="Pitch in..."
+            className="min-w-0 flex-1 rounded-lg border border-white/8 bg-[#12121c] px-3 py-2 text-sm text-white placeholder:text-slate-600 outline-none focus:border-blue-400/60 disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={!isConnected || draft.trim().length === 0}
+            className="px-3 py-2 rounded-lg bg-blue-500 text-sm font-medium text-white hover:bg-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Send
+          </button>
+        </form>
       </div>
     </div>
   );

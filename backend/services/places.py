@@ -192,10 +192,48 @@ MOCK_VENUES: dict = {
 }
 
 
-def _get_mock_venues(template: str) -> List[VenueProposal]:
+LOCATION_CENTERS = {
+    "portland": (45.5152, -122.6784),
+    "portland, or": (45.5152, -122.6784),
+    "gresham": (45.5001, -122.4302),
+    "hillsboro": (45.5229, -122.9898),
+    "tigard": (45.4312, -122.7715),
+    "san francisco": (37.7749, -122.4194),
+    "sf": (37.7749, -122.4194),
+}
+
+
+def _location_center(location: str) -> tuple[float, float]:
+    normalized = location.lower().strip()
+    for key, center in LOCATION_CENTERS.items():
+        if key in normalized:
+            return center
+    return (37.7749, -122.4194)
+
+
+def _get_mock_venues(template: str, location: str = "") -> List[VenueProposal]:
     """Return mock venues for a given template."""
     key = template.lower().replace(" ", "_")
-    return MOCK_VENUES.get(key, MOCK_VENUES["default"])
+    venues = MOCK_VENUES.get(key, MOCK_VENUES["default"])
+    if not location:
+        return venues
+
+    center_lat, center_lng = _location_center(location)
+    offsets = [(0.0, 0.0), (0.012, 0.018), (-0.011, -0.015), (0.018, -0.01), (-0.016, 0.012)]
+
+    localized = []
+    for i, venue in enumerate(venues):
+      dlat, dlng = offsets[i % len(offsets)]
+      localized.append(
+          venue.model_copy(
+              update={
+                  "address": f"{venue.address}, {location}",
+                  "lat": round(center_lat + dlat, 6),
+                  "lng": round(center_lng + dlng, 6),
+              }
+          )
+      )
+    return localized
 
 
 def _price_level_from_google(pl: Optional[int]) -> Optional[int]:
@@ -209,7 +247,7 @@ async def search_venues(query: str, location: str, template: str) -> List[VenueP
     Falls back to mock data if API key is not configured.
     """
     if not GOOGLE_PLACES_API_KEY:
-        return _get_mock_venues(template)
+        return _get_mock_venues(template, location)
 
     full_query = f"{query} in {location}"
     params = {
@@ -249,10 +287,10 @@ async def search_venues(query: str, location: str, template: str) -> List[VenueP
                 )
             )
 
-        return venues if venues else _get_mock_venues(template)
+        return venues if venues else _get_mock_venues(template, location)
 
     except Exception:
-        return _get_mock_venues(template)
+        return _get_mock_venues(template, location)
 
 
 async def get_venue_details(place_id: str) -> dict:

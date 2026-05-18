@@ -1,16 +1,13 @@
 """Individual proxy agent powered by Claude — the heart of Proxy negotiation."""
-import os
 import random
 from typing import List
 import anthropic
-from dotenv import load_dotenv
 
+from config import get_anthropic_api_key
 from models.schemas import NegotiationMessage, ProxyAgent as ProxyAgentModel, UserProfile
 from memory.store import ProxyMemory
 
-load_dotenv()
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY = get_anthropic_api_key()
 
 PROXY_NAMES = [
     "Nova", "Atlas", "Echo", "Cipher", "Lyra", "Orion", "Nexus", "Vega",
@@ -103,7 +100,28 @@ class ProxyAgent:
     async def _call_claude(self, system: str, user_msg: str, max_tokens: int = 512) -> str:
         """Call Claude claude-sonnet-4-6 asynchronously. Falls back to a template message."""
         if not self._client:
-            return f"[{self.proxy.proxy_name}] I'm here to negotiate on behalf of {self.user.name}!"
+            lower_msg = user_msg.lower()
+            prefs = self.user.preferences
+            if "just vetoed" in lower_msg:
+                return (
+                    f"{self.user.name} is right to call that out. I can be flexible on the exact spot, "
+                    f"but I want us to respect their {prefs.budget} budget and {prefs.travel_tolerance} travel comfort "
+                    "instead of letting one person quietly absorb the pain."
+                )
+            if "compromise" in lower_msg:
+                return (
+                    f"I can move a bit for the group, but I don't want {self.user.name}'s needs to disappear. "
+                    "Let's trade off fairly: if the venue stretches travel or budget for them, it should clearly solve something important for everyone."
+                )
+            if "proposal" in lower_msg or "venue" in lower_msg:
+                return (
+                    f"For {self.user.name}, I'd rather choose a place that feels easy to say yes to than one that only wins on paper. "
+                    f"Keep it {prefs.budget} budget, {prefs.travel_tolerance} travel, and close to their actual preferences."
+                )
+            return (
+                f"I'm representing {self.user.name} here, so I'm watching for the human stuff: budget pressure, travel friction, "
+                "and whether the compromise still feels good once everyone has to actually show up."
+            )
 
         try:
             response = await self._client.messages.create(

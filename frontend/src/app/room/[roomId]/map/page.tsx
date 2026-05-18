@@ -1,13 +1,12 @@
 "use client";
 
-import { use, useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRoomStore } from "@/stores/roomStore";
 import { getRoom, getVenues } from "@/lib/api";
 import type { VenueProposal } from "@/types";
-import "mapbox-gl/dist/mapbox-gl.css";
 
 // Lazy load FairnessMap (uses browser APIs)
 const FairnessMap = dynamic(
@@ -29,6 +28,69 @@ const FairnessMap = dynamic(
     ),
   }
 );
+
+function seededUnit(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+
+  return Math.abs(Math.sin(hash) * 10000) % 1;
+}
+
+const LOCATION_COORDS: Array<[string, number, number]> = [
+  ["gresham", 45.5001, -122.4302],
+  ["hillsboro", 45.5229, -122.9898],
+  ["tigard", 45.4312, -122.7715],
+  ["portland", 45.5152, -122.6784],
+  ["san francisco", 37.7749, -122.4194],
+  ["sf", 37.7749, -122.4194],
+];
+
+function getFallbackOffset(userId: string, index: number): [number, number] {
+  const seed = userId || `user-${index}`;
+  return [
+    (seededUnit(`${seed}:lat`) - 0.5) * 0.18,
+    (seededUnit(`${seed}:lng`) - 0.5) * 0.18,
+  ];
+}
+
+function getLocationCoords(
+  location: string | undefined,
+  fallbackCenter: [number, number],
+  userId: string,
+  index: number
+): [number, number] {
+  const normalized = location?.toLowerCase().trim() ?? "";
+  const match = LOCATION_COORDS.find(([key]) => normalized.includes(key));
+  if (match) return [match[1], match[2]];
+
+  const [dlat, dlng] = getFallbackOffset(userId, index);
+  return [fallbackCenter[0] + dlat, fallbackCenter[1] + dlng];
+}
+
+function distanceMiles(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (n: number) => (n * Math.PI) / 180;
+  const earthRadiusMiles = 3958.8;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusMiles * Math.asin(Math.sqrt(h));
+}
+
+function estimateTravelMinutes(
+  userLat: number,
+  userLng: number,
+  venueLat: number,
+  venueLng: number
+): number {
+  const miles = distanceMiles(userLat, userLng, venueLat, venueLng);
+  return Math.max(5, Math.round(8 + miles * 2.4));
+}
 
 export default function MapPage({
   params,
@@ -63,37 +125,40 @@ export default function MapPage({
 
   const currentVenue = venues[selectedVenueIndex] ?? room?.venue_proposals?.[0] ?? null;
 
-  // Stable random offsets per user so travelData doesn't recreate the map on every render
-  const userCount = room?.users?.length ?? 0;
-  const stableOffsets = useRef<number[][]>([]);
-  if (stableOffsets.current.length !== userCount) {
-    stableOffsets.current = Array.from({ length: userCount }, () => [
-      (Math.random() - 0.5) * 0.05,
-      (Math.random() - 0.5) * 0.05,
-      15 + Math.round(Math.random() * 25),
-    ]);
-  }
-
   const travelData = useMemo(() => {
     const venueLat = currentVenue?.latitude ?? (currentVenue as any)?.lat; // eslint-disable-line @typescript-eslint/no-explicit-any
     const venueLng = currentVenue?.longitude ?? (currentVenue as any)?.lng; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const roomCenter = getLocationCoords(
+      room?.location ?? undefined,
+      [45.5152, -122.6784],
+      roomId,
+      0
+    );
+
     return (room?.users ?? []).map((user, i) => {
-      const [dlat, dlng, mins] = stableOffsets.current[i] ?? [0, 0, 20];
+      const [userLat, userLng] = getLocationCoords(
+        user.preferences?.location,
+        roomCenter,
+        user.user_id,
+        i
+      );
+      const hasVenueCoords = venueLat != null && venueLng != null;
       return {
         userId: user.user_id,
         userName: user.name,
-        travelMinutes: mins,
-        latitude: venueLat != null ? venueLat + dlat : 40.7484 + dlat,
-        longitude: venueLng != null ? venueLng + dlng : -73.9857 + dlng,
+        travelMinutes: hasVenueCoords
+          ? estimateTravelMinutes(userLat, userLng, venueLat, venueLng)
+          : 20,
+        latitude: userLat,
+        longitude: userLng,
       };
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVenue, room?.users]);
+  }, [currentVenue, room?.location, room?.users, roomId]);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex flex-col">
+    <div className="h-screen bg-[#0a0a0f] flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-white/8 bg-[#0d0d14]">
+      <header className="h-16 flex items-center justify-between px-6 border-b border-white/8 bg-[#0d0d14] flex-shrink-0">
         <div className="flex items-center gap-4">
           <Link
             href={`/room/${roomId}`}
@@ -135,9 +200,9 @@ export default function MapPage({
       </header>
 
       {/* Map + sidebar layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden">
         {/* Full map */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative h-full min-h-0">
           {isLoading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0d0d14]">
               <div className="flex flex-col items-center gap-3">

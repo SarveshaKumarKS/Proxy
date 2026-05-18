@@ -29,7 +29,17 @@ async function request<T>(
     let errorMessage = `API error ${res.status}`;
     try {
       const body = await res.json();
-      errorMessage = body.detail ?? body.message ?? errorMessage;
+      if (typeof body.detail === "string") {
+        errorMessage = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        errorMessage = body.detail
+          .map((item: { msg?: string; loc?: string[] }) =>
+            [item.loc?.join("."), item.msg].filter(Boolean).join(": ")
+          )
+          .join("; ");
+      } else if (typeof body.message === "string") {
+        errorMessage = body.message;
+      }
     } catch {
       // ignore parse errors
     }
@@ -125,6 +135,7 @@ function normalizeRoom(raw: any): RoomState {
     room_id: raw.room_id ?? raw.id ?? "",
     room_name: raw.room_name ?? raw.name ?? "Untitled Room",
     template: raw.template,
+    location: raw.location ?? null,
     status: raw.status ?? "waiting",
     created_at: raw.created_at ?? new Date().toISOString(),
     host_id: raw.host_id ?? "",

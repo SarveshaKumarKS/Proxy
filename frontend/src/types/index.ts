@@ -148,6 +148,7 @@ export interface RoomState {
   room_id: string;
   room_name: string;
   template: MeetupTemplate;
+  location?: string | null;
   status: RoomStatus;
   created_at: string;
   host_id: string;
@@ -214,11 +215,11 @@ export interface JoinRoomRequest {
 export interface RelaxConstraintRequest {
   constraint_type: string;
   new_value: unknown;
-  proxy_id: string;
+  user_id: string;
 }
 
 export interface VetoRequest {
-  proxy_id: string;
-  venue_id: string;
+  user_id: string;
+  veto_target: string;
   reason: string;
 }

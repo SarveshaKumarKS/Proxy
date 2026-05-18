@@ -23,7 +23,7 @@ from models.schemas import (
     VenueProposal,
 )
 from memory.store import get_proxy_memory
-from agents.proxy_agent import ProxyAgent
+from agents.proxy_agent import PROXY_NAMES, ProxyAgent
 from agents.resolver_agent import ResolverAgent
 from services.places import search_venues
 from services.weather import get_weather_context
@@ -60,19 +60,41 @@ async def _broadcast(broadcast_fn: Callable, event_type: str, data: dict):
         pass
 
 
+async def _emit_message(
+    room: RoomState,
+    broadcast_fn: Callable,
+    proxy_name: str,
+    human_name: str,
+    message: str,
+    message_type: str = "info",
+) -> NegotiationMessage:
+    """Append and broadcast one visible negotiation message."""
+    msg = NegotiationMessage(
+        proxy_name=proxy_name,
+        human_name=human_name,
+        message=message,
+        message_type=message_type,
+    )
+    room.messages.append(msg)
+    await _broadcast(broadcast_fn, "negotiation_message", {
+        "message": msg.model_dump(mode="json")
+    })
+    return msg
+
+
 async def collect_preferences(state: NegotiationState) -> NegotiationState:
     """Node 1: Gather preferences and fetch weather/venue context."""
     room: RoomState = state["room"]
     broadcast_fn = state["broadcast_fn"]
 
-    await _broadcast(broadcast_fn, "negotiation_message", {
-        "message": {
-            "proxy_name": "System",
-            "human_name": "System",
-            "message": "Gathering preferences and checking local context...",
-            "message_type": "proposal",
-        }
-    })
+    await _emit_message(
+        room,
+        broadcast_fn,
+        "System",
+        "System",
+        "Gathering everyone's preferences and checking the local context...",
+        "info",
+    )
 
     # Fetch weather context
     if room.location:
@@ -96,17 +118,43 @@ async def generate_proxies(state: NegotiationState) -> NegotiationState:
     """Node 2: Generate proxy profiles for all users in parallel."""
     room: RoomState = state["room"]
     broadcast_fn = state["broadcast_fn"]
+    used_proxy_names = set()
 
-    await _broadcast(broadcast_fn, "negotiation_message", {
-        "message": {
-            "proxy_name": "System",
-            "human_name": "System",
-            "message": f"Awakening {len(room.users)} proxy agents...",
-            "message_type": "proposal",
-        }
-    })
+    def unique_proxy_name(requested_name: str) -> str:
+        cleaned = (requested_name or "").strip() or "Proxy"
+        lowered = {name.lower() for name in used_proxy_names}
+        if cleaned.lower() not in lowered:
+            used_proxy_names.add(cleaned)
+            return cleaned
+        for candidate in PROXY_NAMES:
+            if candidate.lower() not in lowered:
+                used_proxy_names.add(candidate)
+                return candidate
+        suffix = 2
+        while f"{cleaned}{suffix}".lower() in lowered:
+            suffix += 1
+        unique = f"{cleaned}{suffix}"
+        used_proxy_names.add(unique)
+        return unique
+
+    await _emit_message(
+        room,
+        broadcast_fn,
+        "System",
+        "System",
+        f"Spinning up {len(room.users)} agents. Each one is reading their human's preferences now.",
+        "info",
+    )
 
     async def create_proxy_for_user(user_id: str, user):
+        await _emit_message(
+            room,
+            broadcast_fn,
+            "Proxy Desk",
+            user.name,
+            f"Building {user.name}'s agent voice from their budget, travel comfort, food needs, and personality.",
+            "info",
+        )
         memory = get_proxy_memory(user_id)
         # Create a temporary ProxyAgentModel for the ProxyAgent constructor
         temp_proxy = ProxyAgentModel(
@@ -129,24 +177,28 @@ async def generate_proxies(state: NegotiationState) -> NegotiationState:
         )
         return user_id, proxy_model
 
-    tasks = [create_proxy_for_user(uid, user) for uid, user in room.users.items()]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [
+        asyncio.create_task(create_proxy_for_user(uid, user))
+        for uid, user in room.users.items()
+    ]
 
-    for result in results:
-        if isinstance(result, Exception):
+    for task in asyncio.as_completed(tasks):
+        try:
+            result = await task
+        except Exception:
             continue
         user_id, proxy_model = result
+        proxy_model.proxy_name = unique_proxy_name(proxy_model.proxy_name)
         room.proxies[user_id] = proxy_model
 
-        await _broadcast(broadcast_fn, "negotiation_message", {
-            "message": {
-                "proxy_name": proxy_model.proxy_name,
-                "human_name": proxy_model.human_name,
-                "message": f"I'm {proxy_model.proxy_name} — {proxy_model.personality_summary}",
-                "message_type": "proposal",
-                "color": proxy_model.color,
-            }
-        })
+        await _emit_message(
+            room,
+            broadcast_fn,
+            proxy_model.proxy_name,
+            proxy_model.human_name,
+            f"I'm {proxy_model.proxy_name} — {proxy_model.personality_summary}",
+            "proposal",
+        )
 
     # Broadcast full room state so frontend picks up new proxies immediately
     await _broadcast(broadcast_fn, "room_state", room.model_dump(mode="json"))
@@ -171,6 +223,15 @@ async def parallel_proposals(state: NegotiationState) -> NegotiationState:
     query = query_map.get(room.template.value, "venue")
     location = room.location or "San Francisco"
 
+    await _emit_message(
+        room,
+        broadcast_fn,
+        "System",
+        "System",
+        f"Looking for realistic {room.template.value.replace('_', ' ')} options around {location}.",
+        "info",
+    )
+
     try:
         venues = await search_venues(query, location, room.template.value)
         room.venues = venues
@@ -194,17 +255,31 @@ async def parallel_proposals(state: NegotiationState) -> NegotiationState:
         user = room.users.get(user_id)
         if not user:
             return None
+        await _emit_message(
+            room,
+            broadcast_fn,
+            proxy_model.proxy_name,
+            user.name,
+            f"I'm checking what would actually feel good for {user.name}, not just what scores well.",
+            "info",
+        )
         memory = get_proxy_memory(user_id)
         agent = ProxyAgent(proxy_model, user, memory)
         msg = await agent.make_proposal(context, round=1)
         return msg
 
-    tasks = [make_proposal_for(uid, proxy) for uid, proxy in room.proxies.items()]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [
+        asyncio.create_task(make_proposal_for(uid, proxy))
+        for uid, proxy in room.proxies.items()
+    ]
 
     proposals = []
-    for result in results:
-        if isinstance(result, Exception) or result is None:
+    for task in asyncio.as_completed(tasks):
+        try:
+            result = await task
+        except Exception:
+            continue
+        if result is None:
             continue
         proposals.append(result)
         room.messages.append(result)
@@ -228,6 +303,14 @@ async def detect_conflicts(state: NegotiationState) -> NegotiationState:
     broadcast_fn = state["broadcast_fn"]
 
     resolver = ResolverAgent()
+    await _emit_message(
+        room,
+        broadcast_fn,
+        "Resolver",
+        "System",
+        "Reading the agent proposals now and looking for where the compromise might feel lopsided.",
+        "info",
+    )
     conflicts = await resolver.detect_conflicts(room.messages)
 
     if conflicts:
@@ -256,29 +339,43 @@ async def negotiate_rounds(state: NegotiationState) -> NegotiationState:
     for round_num in range(2, 4):  # rounds 2 and 3
         room.negotiation_round = round_num
 
-        await _broadcast(broadcast_fn, "negotiation_message", {
-            "message": {
-                "proxy_name": "System",
-                "human_name": "System",
-                "message": f"Entering compromise round {round_num}...",
-                "message_type": "proposal",
-            }
-        })
+        await _emit_message(
+            room,
+            broadcast_fn,
+            "System",
+            "System",
+            f"Round {round_num}: agents are trading off comfort, cost, and commute.",
+            "info",
+        )
 
         async def compromise_for(user_id: str, proxy_model: ProxyAgentModel):
             user = room.users.get(user_id)
             if not user:
                 return None
+            await _emit_message(
+                room,
+                broadcast_fn,
+                proxy_model.proxy_name,
+                user.name,
+                f"I'm deciding what {user.name} can bend on, and what would make the plan feel unfair.",
+                "info",
+            )
             memory = get_proxy_memory(user_id)
             agent = ProxyAgent(proxy_model, user, memory)
             msg = await agent.negotiate_compromise(conflicts, other_proposals)
             return msg
 
-        tasks = [compromise_for(uid, proxy) for uid, proxy in room.proxies.items()]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [
+            asyncio.create_task(compromise_for(uid, proxy))
+            for uid, proxy in room.proxies.items()
+        ]
 
-        for result in results:
-            if isinstance(result, Exception) or result is None:
+        for task in asyncio.as_completed(tasks):
+            try:
+                result = await task
+            except Exception:
+                continue
+            if result is None:
                 continue
             room.messages.append(result)
             other_proposals.append(result.message)  # update for next round context
@@ -289,6 +386,14 @@ async def negotiate_rounds(state: NegotiationState) -> NegotiationState:
 
         # Resolver synthesis after each round
         resolver = ResolverAgent()
+        await _emit_message(
+            room,
+            broadcast_fn,
+            "Resolver",
+            "System",
+            "Pulling those compromises together into something the group can react to.",
+            "info",
+        )
         resolver_proposal = await resolver.generate_compromise_proposal(room, room.venues)
         room.messages.append(resolver_proposal)
 
@@ -320,14 +425,14 @@ async def human_checkpoint(state: NegotiationState) -> NegotiationState:
     except Exception:
         fairness_summary = "Fairness analysis complete."
 
-    await _broadcast(broadcast_fn, "negotiation_message", {
-        "message": {
-            "proxy_name": "Resolver",
-            "human_name": "System",
-            "message": fairness_summary,
-            "message_type": "resolver",
-        }
-    })
+    await _emit_message(
+        room,
+        broadcast_fn,
+        "Resolver",
+        "System",
+        fairness_summary,
+        "resolver",
+    )
 
     await _broadcast(broadcast_fn, "human_checkpoint", {
         "message": "Human review opportunity — vetoes and constraint relaxations can be submitted now.",
@@ -344,14 +449,14 @@ async def generate_consensus(state: NegotiationState) -> NegotiationState:
     room: RoomState = state["room"]
     broadcast_fn = state["broadcast_fn"]
 
-    await _broadcast(broadcast_fn, "negotiation_message", {
-        "message": {
-            "proxy_name": "Resolver",
-            "human_name": "System",
-            "message": "Synthesizing final consensus from all proposals and constraints...",
-            "message_type": "resolver",
-        }
-    })
+    await _emit_message(
+        room,
+        broadcast_fn,
+        "Resolver",
+        "System",
+        "Synthesizing the final plan from the agent debate and fairness tradeoffs...",
+        "resolver",
+    )
 
     resolver = ResolverAgent()
     consensus = await resolver.generate_final_consensus(room, room.venues)

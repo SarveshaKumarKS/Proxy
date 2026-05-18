@@ -39,6 +39,60 @@ def set_room_store(store: dict):
     _room_store = store
 
 
+def _ensure_unique_proxy_names(room: RoomState) -> bool:
+    """Rename duplicate proxy names in-place. Returns True if anything changed."""
+    from agents.proxy_agent import PROXY_NAMES
+
+    used: set[str] = set()
+    changed = False
+
+    def rename_proxy(proxy, new_name: str) -> None:
+        old_name = (proxy.proxy_name or "").strip()
+        proxy.proxy_name = new_name
+        if old_name and proxy.personality_summary:
+            proxy.personality_summary = proxy.personality_summary.replace(old_name, new_name, 1)
+
+    def align_summary_name(proxy) -> bool:
+        prefix = "I'm "
+        if not proxy.personality_summary.startswith(prefix):
+            return False
+        rest = proxy.personality_summary[len(prefix):]
+        current_intro = rest.split(",", 1)[0].split(" ", 1)[0]
+        if current_intro == proxy.proxy_name:
+            return False
+        proxy.personality_summary = proxy.personality_summary.replace(
+            f"{prefix}{current_intro}",
+            f"{prefix}{proxy.proxy_name}",
+            1,
+        )
+        return True
+
+    for proxy in room.proxies.values():
+        original = (proxy.proxy_name or "").strip() or "Proxy"
+        lowered = original.lower()
+        if lowered not in used:
+            proxy.proxy_name = original
+            used.add(lowered)
+            changed = align_summary_name(proxy) or changed
+            continue
+
+        for candidate in PROXY_NAMES:
+            if candidate.lower() not in used:
+                rename_proxy(proxy, candidate)
+                used.add(candidate.lower())
+                changed = True
+                break
+        else:
+            suffix = 2
+            while f"{original}{suffix}".lower() in used:
+                suffix += 1
+            rename_proxy(proxy, f"{original}{suffix}")
+            used.add(proxy.proxy_name.lower())
+            changed = True
+
+    return changed
+
+
 # ---------------------------------------------------------------------------
 # Helper to get or 404
 # ---------------------------------------------------------------------------
@@ -47,6 +101,8 @@ def _get_room(room_id: str, store: dict) -> RoomState:
     room = store.get(room_id)
     if not room:
         raise HTTPException(status_code=404, detail=f"Room '{room_id}' not found")
+    if _ensure_unique_proxy_names(room):
+        store[room_id] = room
     return room
 
 
@@ -91,6 +147,7 @@ async def join_room(
     user = body.user_profile
     user.room_id = room_id
     room.users[user.id] = user
+    store[room_id] = room
 
     # Broadcast updated room to all connected clients so participant count updates live
     from routers.websocket import get_connection_manager
@@ -128,11 +185,16 @@ async def start_negotiation(
     if len(room.users) < 1:
         raise HTTPException(status_code=400, detail="At least 1 user must join before starting")
 
-    room.status = "negotiating"
-
     # Import here to avoid circular dependency
-    from agents.orchestrator import run_negotiation
-    from routers.websocket import get_connection_manager
+    try:
+        from agents.orchestrator import run_negotiation
+        from routers.websocket import get_connection_manager
+    except Exception as exc:
+        logger.error("Negotiation startup failed for room %s: %s\n%s", room_id, exc, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Negotiation startup failed: {exc}")
+
+    room.status = "negotiating"
+    store[room_id] = room
 
     async def _run():
         manager = get_connection_manager()
@@ -239,7 +301,7 @@ async def veto(
     veto_msg = NegotiationMessage(
         proxy_name=proxy_model.proxy_name if proxy_model else user.name,
         human_name=user.name,
-        message=f"[VETO] {user.name} vetoed '{body.veto_target}': {body.reason}",
+        message=f'{user.name} jumped in: "{body.reason}"',
         message_type="conflict",
     )
     room.messages.append(veto_msg)
@@ -281,7 +343,14 @@ async def get_venues(
     """Get venue proposals for a room. Fetches from Places API if not yet populated."""
     room = _get_room(room_id, store)
 
-    if not room.venues:
+    has_stale_mock_venues = (
+        bool(room.location)
+        and bool(room.venues)
+        and all(v.proposed_by == "system" for v in room.venues)
+        and all(room.location.lower() not in v.address.lower() for v in room.venues)
+    )
+
+    if not room.venues or has_stale_mock_venues:
         query_map = {
             "dinner_night": "restaurant dinner",
             "chill_hangout": "cafe bar hangout",
@@ -293,5 +362,6 @@ async def get_venues(
         query = query_map.get(room.template.value, "venue")
         location = room.location or "San Francisco"
         room.venues = await search_venues(query, location, room.template.value)
+        store[room_id] = room
 
     return room.venues
