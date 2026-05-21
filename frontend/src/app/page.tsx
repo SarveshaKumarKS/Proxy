@@ -218,7 +218,7 @@ export default function LandingPage() {
           {/* Left: Text */}
           <div className="space-y-8">
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6 }}
             >
@@ -245,7 +245,7 @@ export default function LandingPage() {
             </motion.div>
 
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
               className="flex flex-col sm:flex-row gap-4"
@@ -271,7 +271,7 @@ export default function LandingPage() {
             </motion.div>
 
             <motion.div
-              initial={{ opacity: 0 }}
+              initial={false}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.5 }}
               className="flex items-center gap-6 text-sm text-slate-500"
@@ -290,7 +290,7 @@ export default function LandingPage() {
 
           {/* Right: Animated graph */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
+            initial={false}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.8, delay: 0.3 }}
             className="relative h-[420px] rounded-2xl bg-[#12121a] border border-white/8 overflow-hidden"
@@ -319,7 +319,7 @@ export default function LandingPage() {
 
         {/* Feature cards */}
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.7 }}
           className="mt-24 grid md:grid-cols-3 gap-6"
@@ -327,7 +327,7 @@ export default function LandingPage() {
           {features.map((feature, i) => (
             <motion.div
               key={i}
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.8 + i * 0.1 }}
               className="relative group p-6 rounded-2xl bg-[#12121a] border border-white/8 hover:border-blue-500/30 transition-all duration-300 hover:bg-[#1a1a2e] overflow-hidden"
@@ -352,7 +352,7 @@ export default function LandingPage() {
 
         {/* Bottom CTA */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 1.1 }}
           className="mt-24 text-center"
