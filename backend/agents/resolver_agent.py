@@ -3,7 +3,7 @@ import json
 from typing import List
 import anthropic
 
-from config import get_anthropic_api_key
+from config import get_anthropic_api_key, get_anthropic_base_url
 from models.schemas import (
     ConsensusResult,
     NegotiationMessage,
@@ -13,6 +13,7 @@ from models.schemas import (
 from services.fairness import compute_all_metrics
 
 ANTHROPIC_API_KEY = get_anthropic_api_key()
+ANTHROPIC_BASE_URL = get_anthropic_base_url()
 
 
 def _format_messages(messages: List[NegotiationMessage]) -> str:
@@ -56,7 +57,14 @@ class ResolverAgent:
     """Central AI resolver that analyzes conflicts and generates consensus proposals."""
 
     def __init__(self):
-        self._client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+        self._client = (
+            anthropic.AsyncAnthropic(
+                api_key=ANTHROPIC_API_KEY,
+                base_url=ANTHROPIC_BASE_URL or None,
+            )
+            if ANTHROPIC_API_KEY
+            else None
+        )
 
     async def _call_claude(self, system: str, user_msg: str, max_tokens: int = 1024) -> str:
         """Call Claude claude-sonnet-4-6 async. Returns fallback string on error."""

@@ -29,3 +29,14 @@ def get_anthropic_api_key() -> str:
         or os.getenv("ANTHROPIC_KEY")
         or ""
     )
+
+
+def get_anthropic_base_url() -> str:
+    """Return an optional Anthropic-compatible API base URL."""
+    load_environment()
+    return (
+        os.getenv("ANTHROPIC_BASE_URL")
+        or os.getenv("ANTHROPIC_API_BASE")
+        or os.getenv("CLAUDE_BASE_URL")
+        or ""
+    )

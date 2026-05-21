@@ -3,11 +3,12 @@ import random
 from typing import List
 import anthropic
 
-from config import get_anthropic_api_key
+from config import get_anthropic_api_key, get_anthropic_base_url
 from models.schemas import NegotiationMessage, ProxyAgent as ProxyAgentModel, UserProfile
 from memory.store import ProxyMemory
 
 ANTHROPIC_API_KEY = get_anthropic_api_key()
+ANTHROPIC_BASE_URL = get_anthropic_base_url()
 
 PROXY_NAMES = [
     "Nova", "Atlas", "Echo", "Cipher", "Lyra", "Orion", "Nexus", "Vega",
@@ -95,7 +96,14 @@ class ProxyAgent:
         self.proxy = proxy
         self.user = user
         self.memory = memory
-        self._client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+        self._client = (
+            anthropic.AsyncAnthropic(
+                api_key=ANTHROPIC_API_KEY,
+                base_url=ANTHROPIC_BASE_URL or None,
+            )
+            if ANTHROPIC_API_KEY
+            else None
+        )
 
     async def _call_claude(self, system: str, user_msg: str, max_tokens: int = 512) -> str:
         """Call Claude claude-sonnet-4-6 asynchronously. Falls back to a template message."""

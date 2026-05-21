@@ -88,8 +88,14 @@ function normalizeRoom(raw: any): RoomState {
   };
 }
 
+const API_BASE =
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+
 const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
+  process.env.NEXT_PUBLIC_WS_URL ??
+  API_BASE.replace(/^https?:\/\//, (protocol) =>
+    protocol === "https://" ? "wss://" : "ws://"
+  );
 
 interface RoomStore {
   room: RoomState | null;
